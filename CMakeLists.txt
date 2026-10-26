@@ -69,6 +69,14 @@ target_link_libraries(comet_free_bytes_count
     PRIVATE comet
 )
 
+add_executable(comet_multi_thread_bench
+    benchmarks/allocator_multi_thread_bench.cpp
+)
+
+target_link_libraries(comet_multi_thread_bench
+    PRIVATE comet
+)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(comet PRIVATE -Wall -Wextra -Wpedantic)
 endif()

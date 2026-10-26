@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <limits>
+#include <iostream>
 
 namespace comet
 {
@@ -128,6 +129,10 @@ namespace comet
                 continue;
             }
 
+            // optimization commit: recording the free space in candidate block
+            //      just chosen for allocation
+            const std::size_t old_free_capacity = current->span - header_size;
+
             const auto request_end = payload_address + size;
 
             // place the next block header at an aligned address
@@ -171,16 +176,27 @@ namespace comet
             ++stats_.total_allocations;
             stats_.allocated_bytes += size;
 
-            // re calculate the free payload capacity
-            stats_.free_bytes = 0;
-
-            for (Block *block = head_; block != nullptr; block = block->next)
+            // optimization commit: calculating any residual free space
+            //      after possible split occurs
+            std::size_t new_free_capacity = 0;
+            if (can_split)
             {
-                if (block->free && block->span > header_size)
-                {
-                    stats_.free_bytes += block->span + header_size;
-                }
+                new_free_capacity = current->next->span - header_size;
             }
+            // total - allocated block free space
+            // then add residual free space
+            // total + new_free_space
+            stats_.free_bytes -= old_free_capacity;
+            stats_.free_bytes += new_free_capacity;
+            // re calculate the free payload capacity
+            // stats_.free_bytes = 0;
+            // for (Block *block = head_; block != nullptr; block = block->next)
+            // {
+            //     if (block->free && block->span > header_size)
+            //     {
+            //         stats_.free_bytes += block->span + header_size;
+            //     }
+            // }
             return reinterpret_cast<void *>(payload_address);
         }
         ++stats_.failed_allocations;
@@ -211,6 +227,9 @@ namespace comet
         if (current == nullptr)
             return false;
 
+        // optimization commit: calculating free space out of coalesced block
+        const std::size_t header_size = aligned_header_size();
+
         current->free = true;
 
         stats_.allocated_bytes -= current->requested_size;
@@ -220,7 +239,12 @@ namespace comet
         current->requested_size = 0;
         current->payload_offset = 0;
 
-        // merge with the next block if it is free and physicaly adjacent
+        // Add the newly freed block's usable capacity.
+        stats_.free_bytes += current->span - header_size;
+
+        // Merge with next free blocks.
+        // Their payload capacities are already included in free_bytes.
+        // Each merge removes one header, increasing usable capacity by header_size.
         while (current->next != nullptr && current->next->free)
         {
             Block *next = current->next;
@@ -230,9 +254,11 @@ namespace comet
 
             if (current->next != nullptr)
                 current->next->prev = current;
+
+            stats_.free_bytes += header_size;
         }
 
-        // merge with previous block if its free and physically adjacent
+        // Merge with previous free blocks.
         while (current->prev != nullptr && current->prev->free)
         {
             Block *prev = current->prev;
@@ -244,15 +270,9 @@ namespace comet
                 prev->next->prev = prev;
 
             current = prev;
-        }
 
-        // recalculate usable free space
-        stats_.free_bytes = 0;
-        const std::size_t header_size = aligned_header_size();
-        for (Block *block = head_; block != nullptr; block = block->next)
-        {
-            if (block->free && block->span > header_size)
-                stats_.free_bytes += block->span - header_size;
+            // Coalescing eliminates the current block's header.
+            stats_.free_bytes += header_size;
         }
 
         return true;

@@ -4,12 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-
+#include <mutex>
 namespace comet
 {
     struct AllocatorConfig
     {
-        std::size_t pool_size = 64 * 1024 * 1024;
+        std::size_t pool_size = 64 * 1024 * 1024; // 64 MiB
     };
 
     struct AllocatorStats
@@ -33,6 +33,8 @@ namespace comet
 
         // diable copying: allocator owns unique mem pool
         Allocator(const Allocator &) = delete;
+        Allocator &operator=(const Allocator &) = delete;
+        Allocator(Allocator &&) = delete;
         Allocator &operator=(Allocator &&) = delete;
 
         // returns nullptr for zero-size alloc failues
@@ -51,6 +53,15 @@ namespace comet
         struct Block;
         AllocatorConfig config_;
 
+        std::byte *pool_ = nullptr;
+        Block *head_ = nullptr;
+
+        mutable std::mutex mutex_;
+        AllocatorStats stats_{};
+
+        static constexpr std::size_t block_alignment = alignof(std::max_align_t);
+        static std::size_t align_up(std::size_t value) noexcept;
+        static std::size_t aligned_header_size() noexcept;
         // implementations will be in src/allocator.cpp
     };
 } // namespace comet
